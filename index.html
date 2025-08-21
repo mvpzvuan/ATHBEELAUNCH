@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Athbee — Live Feed</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{
+      --bg:#0f1115; --panel:#171a21; --panel-2:#1d212a; --text:#e6e7eb; --muted:#9aa3af;
+      --accent:#3ba7ff; --pos:#1db954; --neg:#ff4d4f; --neu:#6b7280; --card:#191c24; --border:#242936;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 Inter,system-ui,Segoe UI,Roboto,Arial}
+    .topbar{display:flex;align-items:center;gap:16px;padding:12px 18px;border-bottom:1px solid var(--border);background:#0c0e13;position:sticky;top:0;z-index:10}
+    .brand{font-weight:700;font-size:18px}
+    .search{flex:1;display:flex}
+    .search input{width:100%;padding:10px 12px;border-radius:8px;background:#12151b;border:1px solid var(--border);color:var(--text)}
+    .tabs{display:flex;gap:8px}
+    .tab{padding:8px 12px;border-radius:8px;background:#12151b;border:1px solid var(--border);cursor:pointer}
+    .tab.active{background:var(--panel);border-color:#2a3142}
+    .wrap{display:grid;grid-template-columns:1fr 320px;gap:18px;max-width:1200px;margin:18px auto;padding:0 18px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px;box-shadow:0 6px 20px rgba(0,0,0,.25)}
+    .news-title{font-weight:700;margin:0 0 6px}
+    .news-summary{color:var(--muted);margin:6px 0 10px}
+    .badge{display:inline-block;font-size:12px;padding:4px 8px;border-radius:999px;margin-right:8px}
+    .b-pos{background:rgba(29,185,84,.15);color:var(--pos)}
+    .b-neg{background:rgba(255,77,79,.14);color:var(--neg)}
+    .b-neu{background:rgba(107,114,128,.18);color:var(--neu)}
+    .meta{color:#8f98a3;font-size:12px}
+    .right h3{margin:0 0 12px}
+    .pill{padding:8px 10px;border-radius:10px;background:var(--panel-2);border:1px solid var(--border);margin-bottom:10px}
+    .loader{display:none;justify-content:center;padding:14px}
+    .loader.show{display:flex}
+    .empty{color:var(--muted);text-align:center;padding:24px}
+    @media (max-width: 980px){ .wrap{grid-template-columns:1fr} }
+  </style>
+
+  <!-- Firebase (compat build for simplest usage) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.4/firebase-database-compat.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">Athbee</div>
+    <div class="search"><input id="q" placeholder="Search companies, tickers, topics" /></div>
+    <div class="tabs">
+      <div class="tab active">Home</div>
+      <div class="tab">Watchlist</div>
+      <div class="tab">Markets</div>
+      <div class="tab">AI Insights</div>
+      <div class="tab" onclick="location.href='firebase_uploader.html'">Admin Panel</div>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <main id="feed">
+      <!-- news cards injected here -->
+    </main>
+
+    <aside class="right">
+      <div class="card">
+        <h3>Markets</h3>
+        <div class="pill">NIFTY <span class="badge b-pos">+0.68%</span></div>
+        <div class="pill">BANKNIFTY <span class="badge b-pos">+0.85%</span></div>
+        <div class="pill">USDINR <span class="badge b-neg">-0.12%</span></div>
+      </div>
+
+      <div class="card" id="hotNews">
+        <h3>Hot News</h3>
+        <!-- hot news filled from the same dataset -->
+      </div>
+    </aside>
+  </div>
+
+  <div id="loader" class="loader"><span>Loading…</span></div>
+
+  <script>
+    // 1) Fill this with your Firebase web app config from Project Settings → Your apps (Web)
+
+        const firebaseConfig = {
+      apiKey: "AIzaSyDB5mBjpODd5vi1U6KggVBr_5Zabr2kKYs",
+      authDomain: "antbeedemo.firebaseapp.com",
+      databaseURL: "https://antbeedemo-default-rtdb.firebaseio.com",
+      projectId: "antbeedemo",
+      storageBucket: "antbeedemo.firebasestorage.app",
+      messagingSenderId: "552696002808",
+      appId: "1:552696002808:web:2042c647db728ed425a30d",
+      measurementId: "G-T6PJZ6Y21R"
+    };
+
+    // 2) Init and get DB
+    firebase.initializeApp(firebaseConfig);
+    const rtdb = firebase.database();
+
+    // --- Utilities ---
+    const loader = document.getElementById('loader');
+    const feedEl = document.getElementById('feed');
+    const hotEl  = document.getElementById('hotNews');
+
+    function sentimentFrom(text) {
+      if (!text) return 'neutral';
+      const t = text.toLowerCase();
+      const pos = /(rise|up|gain|beat|higher|surge|record|strong|profit|positive)/.test(t);
+      const neg = /(fall|down|drop|miss|lower|decline|loss|negative)/.test(t);
+      return pos && !neg ? 'positive' : neg && !pos ? 'negative' : 'neutral';
+    }
+
+    function badgeClass(sent) {
+      return sent === 'positive' ? 'b-pos' : sent === 'negative' ? 'b-neg' : 'b-neu';
+    }
+
+    function formatDate(d) {
+      try { return new Date(d).toLocaleString(); } catch { return d || ''; }
+    }
+
+    function createCard(n) {
+      const sent = sentimentFrom(n.summary || n.body || n.title);
+      const tickers = Array.isArray(n.tickers) ? n.tickers : (n.tickers ? String(n.tickers).split(',') : []);
+      const tags = tickers.slice(0, 4).map(t => `<span class="badge b-neu">${t.trim()}</span>`).join(' ');
+
+      return `
+        <article class="card">
+          <h3 class="news-title">${n.title || 'Untitled'}</h3>
+          <div class="news-summary">${n.summary || n.body || ''}</div>
+          <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+            <span class="badge ${badgeClass(sent)}">${sent[0].toUpperCase()+sent.slice(1)}</span>
+            ${tags}
+            <span class="meta" style="margin-left:auto">${formatDate(n.date)}</span>
+          </div>
+        </article>
+      `;
+    }
+
+    function renderFeed(items) {
+      if (!items.length) {
+        feedEl.innerHTML = `<div class="card empty">No news yet.</div>`;
+        return;
+      }
+      const html = items.map(createCard).join('');
+      feedEl.innerHTML = html;
+
+      // Hot News = first 3
+      hotEl.innerHTML = `<h3>Hot News</h3>` + items.slice(0,3).map(n => `
+        <div class="pill">
+          ${n.title}
+          <div class="meta">${formatDate(n.date)}</div>
+        </div>`).join('');
+    }
+
+    function normalize(raw) {
+      // raw can be: array at root (0,1,2,...) OR object under /news OR object of records
+      let arr = [];
+      if (Array.isArray(raw)) {
+        arr = raw.filter(Boolean);
+      } else if (raw && typeof raw === 'object') {
+        if (raw.news && (Array.isArray(raw.news) || typeof raw.news === 'object')) {
+          const n = raw.news;
+          arr = Array.isArray(n) ? n.filter(Boolean) : Object.values(n);
+        } else {
+          arr = Object.values(raw);
+        }
+      }
+      // ensure format
+      return arr.map(x => ({
+        id: x.id ?? null,
+        title: x.title ?? '',
+        body: x.body ?? x.summary ?? '',
+        summary: x.summary ?? x.body ?? '',
+        tickers: Array.isArray(x.tickers) ? x.tickers : (x.tickers ? String(x.tickers).split(',') : []),
+        date: x.date ?? x.published_at ?? ''
+      }))
+      // sort newest first (fallback if date invalid)
+      .sort((a,b) => new Date(b.date || 0) - new Date(a.date || 0));
+    }
+
+    async function loadFeed() {
+      loader.classList.add('show');
+
+      try {
+        // Try /news first; if empty, fall back to root
+        const snapNews = await rtdb.ref('/news').get();
+        let data = snapNews.exists() ? snapNews.val() : (await rtdb.ref('/').get()).val();
+
+        const items = normalize(data).slice(0, 50); // cap at 50 for now
+        renderFeed(items);
+      } catch (e) {
+        console.error(e);
+        feedEl.innerHTML = `<div class="card empty">Failed to load news. Check Firebase config & rules.</div>`;
+      } finally {
+        loader.classList.remove('show');
+      }
+    }
+
+    // live updates (optional): listen under /news if present, else root
+    (async () => {
+      const newsExists = (await rtdb.ref('/news').get()).exists();
+      const ref = newsExists ? rtdb.ref('/news') : rtdb.ref('/');
+      ref.on('value', snap => {
+        const items = normalize(snap.val()).slice(0,50);
+        renderFeed(items);
+      });
+    })();
+
+    // Search (client-side)
+    document.getElementById('q').addEventListener('input', (e) => {
+      const q = e.target.value.toLowerCase();
+      const cards = Array.from(feedEl.querySelectorAll('.card'));
+      cards.forEach(c => {
+        const show = c.textContent.toLowerCase().includes(q);
+        c.style.display = show ? '' : 'none';
+      });
+    });
+  </script>
+</body>
+</html>

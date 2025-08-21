@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Athbee Admin Panel</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background: #111;
+      color: #eee;
+      text-align: center;
+      padding: 40px;
+    }
+    h2 {
+      color: #00bcd4;
+    }
+    .container {
+      background: #1e1e1e;
+      padding: 30px;
+      border-radius: 10px;
+      display: inline-block;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.6);
+    }
+    input[type="file"] {
+      margin: 15px 0;
+      padding: 8px;
+    }
+    button {
+      padding: 10px 20px;
+      background: #00bcd4;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: 0.3s;
+    }
+    button:hover {
+      background: #0097a7;
+    }
+    #message {
+      margin-top: 20px;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h2>📂 Upload News Database</h2>
+    <form id="uploadForm" enctype="multipart/form-data">
+      <input type="file" id="dbfile" name="dbfile" accept=".db" required />
+      <br>
+      <button type="submit">Upload</button>
+    </form>
+    <p id="message"></p>
+  </div>
+
+  <script>
+    document.getElementById("uploadForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+
+      const fileInput = document.getElementById("dbfile");
+      if (!fileInput.files.length) {
+        document.getElementById("message").innerText = "⚠️ Please select a file first!";
+        return;
+      }
+
+      const formData = new FormData();
+      formData.append("dbfile", fileInput.files[0]);
+
+      try {
+        const res = await fetch("http://127.0.0.1:5500/upload-db", {
+          method: "POST",
+          body: formData
+        });
+
+        const data = await res.json();
+        if (res.ok) {
+          document.getElementById("message").innerText = "✅ File uploaded and saved to Firestore successfully!";
+          document.getElementById("message").style.color = "lightgreen";
+        } else {
+          document.getElementById("message").innerText = "❌ Upload failed: " + data.error;
+          document.getElementById("message").style.color = "red";
+        }
+      } catch (err) {
+        document.getElementById("message").innerText = "⚠️ Error: " + err.message;
+        document.getElementById("message").style.color = "orange";
+      }
+    });
+  </script>
+</body>
+</html>
